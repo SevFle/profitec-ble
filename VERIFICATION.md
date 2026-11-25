@@ -36,3 +36,9 @@ Public-release preparation on 2026-11-25:
 ## Unverified
 
 Linux/Windows hardware, other firmware, calibration accuracy, automatic Flush/Ready Go detection, active calendar-triggered scheduling, weekday names, timed-dose command execution, scale/tare/weight-stop, firmware update, and official cloud services. Readback success must not be described as proof of those behaviors.
+
+## Windows fixture portability
+
+The first public CI run passed Linux and macOS on Python 3.11 and 3.14. Both Windows jobs failed only `test_replay_preserves_unknown_notification`: the subprocess could not reopen a `NamedTemporaryFile` that the parent test still held open. The exception was `PermissionError: [Errno 13]` on the temporary JSONL file. Other replay tests and all other fixture cases passed, ruling out a general CLI decoding or installation failure.
+
+The fixture now uses a regular file inside `TemporaryDirectory` and closes the writer before launching the CLI. Payload and preservation assertions are unchanged. This is a test portability correction; runtime code is unchanged.
