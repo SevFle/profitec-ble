@@ -231,10 +231,10 @@ class CliTests(unittest.TestCase):
                 "hex": "deadbeef",
             }
         ]
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as input_file:
-            input_file.write(json.dumps(rows[0]) + "\n")
-            input_file.flush()
-            result = run_cli("replay", input_file.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "unknown.jsonl"
+            write_jsonl(input_path, rows)
+            result = run_cli("replay", str(input_path))
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(
@@ -244,18 +244,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(output["decoded"]["type"], "RawPacket")
 
     def test_replay_rejects_invalid_json(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as input_file:
-            input_file.write("{not json}\n")
-            input_file.flush()
-            result = run_cli("replay", input_file.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "invalid.jsonl"
+            input_path.write_text("{not json}\n", encoding="utf-8")
+            result = run_cli("replay", str(input_path))
         assert_human_error(self, result)
 
     def test_replay_rejects_malformed_known_packet(self):
         row = {"time": "t", "uuid": PRESSURE_UUID, "hex": "00"}
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as input_file:
-            input_file.write(json.dumps(row) + "\n")
-            input_file.flush()
-            result = run_cli("replay", input_file.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "malformed.jsonl"
+            write_jsonl(input_path, [row])
+            result = run_cli("replay", str(input_path))
         assert_human_error(self, result)
 
     def test_replay_rejects_missing_uuid_or_hex(self):
@@ -264,12 +264,10 @@ class CliTests(unittest.TestCase):
             {"time": "t", "uuid": PRESSURE_UUID},
         )
         for row in rows:
-            with self.subTest(row=row), tempfile.NamedTemporaryFile(
-                "w", suffix=".jsonl"
-            ) as input_file:
-                input_file.write(json.dumps(row) + "\n")
-                input_file.flush()
-                result = run_cli("replay", input_file.name)
+            with self.subTest(row=row), tempfile.TemporaryDirectory() as temp_dir:
+                input_path = Path(temp_dir) / "missing.jsonl"
+                write_jsonl(input_path, [row])
+                result = run_cli("replay", str(input_path))
             assert_human_error(self, result)
 
     def test_summary_complete_shot_uses_only_window_pressure(self):
