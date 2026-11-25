@@ -1,0 +1,3 @@
+include FEATURES.md PROTOCOL.md VERIFICATION.md
+recursive-include examples *.py
+recursive-include tests *.py *.jsonl

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "profitec-ble"
+version = "0.2.0"
+description = "Unofficial Profitec MOVE 2.0 Bluetooth telemetry and control library"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE.md"]
+authors = [{name = "SevFle"}]
+keywords = ["profitec", "move", "bluetooth", "ble", "espresso"]
+requires-python = ">=3.11"
+dependencies = ["bleak==3.1.0"]
+readme = "README.md"
+
+[project.scripts]
+profitec-ble = "profitec_ble.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["profitec_ble*"]
+
+[tool.setuptools.package-data]
+profitec_ble = ["py.typed"]
+
+[project.urls]
+Repository = "https://github.com/SevFle/profitec-ble"
+Issues = "https://github.com/SevFle/profitec-ble/issues"
