@@ -51,7 +51,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Use `aclosing` when a consumer may stop early. Each connection permits one stream, read, or control operation at a time. Failures propagate; request timeouts are not retried. Reconnect after a failed request to avoid accepting a late response as a new one. A slow telemetry consumer raises `BufferError` instead of silently discarding packets.
+Use `aclosing` when a consumer may stop early. Each connection permits one settings read or control operation at a time, beside any number of telemetry streams; a stop is always sent. Failures propagate; request timeouts are not retried. Reconnect after a failed request to avoid accepting a late response as a new one. A slow telemetry consumer raises `BufferError` instead of silently discarding packets.
 
 Pure functions: `decode_pressure`, `decode_status`, `decode_settings`, `settings_request`, `decode`, and `brew_commands`. Results are frozen dataclasses with raw bytes. `MachineStatus` exposes `coffee_temperature`, `steam_temperature`, `state`, and `brewing`. The app converts wire temperatures from Celsius for Fahrenheit display; the telemetry fields retain raw Celsius values.
 
@@ -144,7 +144,7 @@ MQTT_PASSWORD=... profitec-ble bridge DEVICE --mqtt-host homeassistant.local --m
   --journal-dir journals --shots-dir shots [--scale SCALE] [--allow-remote-brew]
 ```
 
-The bridge publishes Home Assistant discovery for pressure, both temperatures, state, brewing, ready, scale weight, and all 20 settings. Settings are editable only with `--journal-dir`. Each write gets a new journal file and shows the read-back value, not the requested one. A failed write is published to `profitec/<device>/error`, followed by a reconnect. Nothing is retried. Retained command messages are ignored, so a broker cannot replay a brew. The bridge reconnects with a 2 s to 60 s backoff and publishes availability. A command arriving while disconnected is rejected, not queued. The **Release Bluetooth** switch disconnects the machine and scale for 10 minutes so the official app can connect. It is refused while brewing.
+The bridge publishes Home Assistant discovery for pressure, both temperatures, state, brewing, ready, scale weight, and all 20 settings. Settings are editable only with `--journal-dir`. Each write gets a new journal file and shows the read-back value, not the requested one. Writes run one at a time. A value outside the allowed range is rejected before the machine is contacted. A failed write is published to `profitec/<device>/error`, and the bridge reconnects when the client reports an uncertain outcome. Nothing is retried. `--log` also publishes raw device-log indications (not yet checked on hardware). Retained command messages are ignored, so a broker cannot replay a brew. The bridge reconnects with a 2 s to 60 s backoff and publishes availability. A command arriving while disconnected is rejected, not queued. The **Release Bluetooth** switch disconnects the machine and scale for 10 minutes so the official app can connect. It is refused while brewing.
 
 `--allow-remote-brew` adds brew dose 1/2, manual, stop, and brew-by-weight buttons. A start is refused unless state is 0 and the coffee temperature is within 2 °C of the setpoint. Remote brewing can start a physical machine with nobody present. Use it only with a cup in place and the machine supervised.
 

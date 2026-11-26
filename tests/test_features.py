@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 from profitec_ble import (
     ProfitecClient, ReadyTracker, ShotRecorder, brew_by_weight, decode_settings, decode_status,
@@ -35,6 +36,12 @@ def shot_rows():
         rows.append((f"12:00:{second:02}", PRESSURE_UUID, int(bar * 1000).to_bytes(2, "big").hex()))
     rows.append(("12:00:10", STATUS_UUID, status_hex(91, 0)))
     return [{"time": f"2026-11-25T{t}+00:00", "uuid": u, "hex": h} for t, u, h in rows]
+
+
+async def wait_until(condition, timeout=5):
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.01)
 
 
 def cli(*args):
@@ -126,6 +133,7 @@ class FakeMachine:
     def __init__(self):
         self.commands = []
         self.queue = asyncio.Queue()
+        self.on_stop = lambda: None
 
     async def events(self, seconds=None, log=False):
         while True:
@@ -136,6 +144,8 @@ class FakeMachine:
 
     async def brew(self, dose):
         self.commands.append(dose)
+        if dose is None:
+            self.on_stop()
         self.status(1 if dose is not None else 0)
 
 
@@ -144,8 +154,7 @@ class BrewByWeightTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             journal = Path(directory) / "bbw.jsonl"
             task = asyncio.create_task(brew_by_weight(machine, scale, 36, dose, journal, settle_seconds=0, start_timeout=1))
-            while not machine.commands:
-                await asyncio.sleep(0.01)
+            await wait_until(lambda: machine.commands)
             await script()
             result = await asyncio.wait_for(task, 5)
             return result, [json.loads(line)["event"] for line in journal.read_text().splitlines()]
@@ -153,11 +162,12 @@ class BrewByWeightTests(unittest.IsolatedAsyncioTestCase):
     async def test_a4_stops_once_at_target_minus_offset(self):
         scale, machine = FakeScale(), FakeMachine()
 
+        machine.on_stop = lambda: setattr(scale, "weight", scale.weight + 1.5)  # drips after stop
+
         async def pour():
             while None not in machine.commands:
                 scale.weight += 1
                 await asyncio.sleep(0.01)
-            scale.weight += 1.5  # drips after stop
 
         result, events = await self.run_bbw(scale, machine, 2, pour)
         self.assertEqual(machine.commands, [2, None])
@@ -215,6 +225,7 @@ class FakeClient:
     def __init__(self, device, allow_experimental_settings=False, allow_experimental_controls=False):
         self.brews = []
         self.queue = asyncio.Queue()
+        self.uncertain = False
         FakeClient.instances.append(self)
 
     async def __aenter__(self):
@@ -240,6 +251,7 @@ class FakeClient:
         with open(journal, "x") as log:
             for entry in ({"event": "before"}, {"event": "sending"}, {"event": "readback", "hex": readback.hex()}):
                 log.write(json.dumps(entry) + "\n")
+        self.uncertain = True
         raise RuntimeError("Readback mismatch for coffee_temperature_c; outcome uncertain, inspect journal")
 
     async def brew(self, dose):
@@ -257,8 +269,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
 
         bridge = Bridge("AA:BB", publish, client=FakeClient, journal_dir=directory, max_backoff=0.01, **options)
         self.runner = asyncio.create_task(bridge.run())
-        while bridge.machine is None:
-            await asyncio.sleep(0.01)
+        await wait_until(lambda: bridge.machine is not None)
         return bridge
 
     async def asyncTearDown(self):
@@ -281,8 +292,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.states("coffee_temperature_c")[-1], "93.0")
             self.assertIn("RuntimeError", self.errors()[-1])
             self.assertEqual(len(list(Path(directory).glob("*-coffee_temperature_c.jsonl"))), 1)
-            while bridge.machine is None or bridge.machine is first:
-                await asyncio.sleep(0.01)  # a6: reconnects after the uncertain write
+            await wait_until(lambda: bridge.machine not in (None, first))  # a6: reconnects after the uncertain write
             await self.settle(bridge)
             self.assertEqual(FakeClient.applies, [{"coffee_temperature_c": 94}])  # never resent
 
@@ -323,6 +333,105 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
 class Sender:
     def __init__(self, uuid):
         self.uuid = uuid
+
+
+CONTROL_UUID = "873ae834-4c5a-4342-b539-9d900bf7ebd0"
+
+
+class MachineBleak:
+    """Patched in for bleak.BleakClient so the real ProfitecClient runs underneath."""
+    instances = []
+
+    def __init__(self, device, timeout):
+        self.is_connected = False
+        self.callbacks = {}
+        self.blocks = {2000: bytearray(DOSES), 3001: bytearray(GENERAL)}
+        self.control = []
+        MachineBleak.instances.append(self)
+
+    async def connect(self):
+        self.is_connected = True
+
+    async def disconnect(self):
+        self.is_connected = False
+
+    async def start_notify(self, uuid, callback):
+        if uuid in self.callbacks:
+            raise RuntimeError("already subscribed")
+        self.callbacks[uuid] = callback
+
+    async def stop_notify(self, uuid):
+        del self.callbacks[uuid]
+
+    def notify(self, uuid, data):
+        if uuid in self.callbacks:
+            self.callbacks[uuid](Sender(uuid), bytes(data))
+
+    def status(self, coffee, state):
+        self.notify(STATUS_UUID, bytes.fromhex(status_hex(coffee, state)))
+
+    async def write_gatt_char(self, uuid, data, response=True):
+        data = bytes(data)
+        loop = asyncio.get_running_loop()
+        if uuid == STATUS_UUID:
+            self.notify(STATUS_UUID, self.blocks[int.from_bytes(data[:2], "big")])
+        elif uuid == CONTROL_UUID:
+            self.control.append(data.hex())
+            if data[:2] == (3001).to_bytes(2, "big"):
+                self.blocks[3001][2:4] = (93).to_bytes(2, "big")  # machine stores 93 whatever was asked
+            elif data.hex() in ("00650001", "00650002"):
+                loop.call_soon(self.status, 93, 1)
+            elif data.hex() == "0065000a":
+                loop.call_soon(self.status, 93, 0)
+
+
+class RealClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bridge_shows_readback_reconnects_once_and_skips_invalid(self):
+        MachineBleak.instances.clear()
+        published = []
+
+        async def publish(topic, payload, retain):
+            published.append((topic, payload))
+
+        with patch("bleak.BleakClient", MachineBleak), tempfile.TemporaryDirectory() as directory:
+            bridge = Bridge("AA:BB", publish, journal_dir=directory, max_backoff=0.01)
+            runner = asyncio.create_task(bridge.run())
+            try:
+                await wait_until(lambda: bridge.machine is not None)
+                first = bridge.machine
+                MachineBleak.instances[-1].status(92, 0)
+                await wait_until(lambda: bridge.status is not None)
+                await bridge.handle("profitec/aa_bb/set/coffee_temperature_c", "94")
+                self.assertEqual([p for t, p in published if t.endswith("state/coffee_temperature_c")][-1], "93.0")
+                self.assertEqual(MachineBleak.instances[0].control, ["0bb9005e"])
+                await wait_until(lambda: bridge.machine not in (None, first))
+                await bridge.handle("profitec/aa_bb/set/eco_minutes", "10")
+                await asyncio.sleep(0.1)
+                self.assertIn("ValueError", [p for t, p in published if t.endswith("/error")][-1])
+                self.assertEqual(len(MachineBleak.instances), 2)  # invalid value: no reconnect
+                self.assertEqual(MachineBleak.instances[1].control, [])  # nothing resent
+            finally:
+                runner.cancel()
+
+    async def test_bbw_start_and_stop_on_one_real_connection(self):
+        MachineBleak.instances.clear()
+        scale = FakeScale()
+        with patch("bleak.BleakClient", MachineBleak), tempfile.TemporaryDirectory() as directory:
+            async with ProfitecClient("fake", allow_experimental_controls=True) as machine:
+                fake = MachineBleak.instances[-1]
+
+                async def pour():
+                    await wait_until(lambda: "00650002" in fake.control)
+                    while "0065000a" not in fake.control:
+                        scale.weight += 1
+                        await asyncio.sleep(0.01)
+
+                pourer = asyncio.create_task(pour())
+                result = await brew_by_weight(machine, scale, 36, 2, Path(directory) / "bbw.jsonl",
+                                              settle_seconds=0.3, start_timeout=2)
+                await pourer
+        self.assertEqual(fake.control, ["00660001", "00650002", "0065000a"])
+        self.assertEqual((result["reason"], result["stopped_observed"]), ("target", True))
 
 
 class SharedNotifyBleak:

@@ -11,7 +11,7 @@ from .client import ProfitecClient
 from .monitor import ReadyTracker, ShotRecorder, annotate_shot
 from .protocol import LOG_UUID, MachineStatus, Pressure, decode, decode_settings
 from .scale import PrecisaScale
-from .settings import SETTABLE, setting_value
+from .settings import SETTABLE, setting_command, setting_value
 
 UNITS = {"temperature_c": "°C", "seconds": "s", "shots": "shots", "litres": "L", "minutes": "min"}
 BREW_GATE_C = 2
@@ -40,7 +40,7 @@ def _state(value):
 class Bridge:
     def __init__(self, device, publish, *, prefix="profitec", allow_remote_brew=False, journal_dir=None,
                  shots_dir=None, scale=None, release_seconds=600, max_backoff=60, client=ProfitecClient,
-                 scale_client=PrecisaScale, bbw_options=None):
+                 scale_client=PrecisaScale, bbw_options=None, log=False):
         self.device, self.publish = device, publish
         self.node = re.sub(r"[^A-Za-z0-9_]", "_", device).lower()
         self.base = f"{prefix}/{self.node}"
@@ -51,6 +51,8 @@ class Bridge:
         self.release_seconds, self.max_backoff = release_seconds, max_backoff
         self.client, self.scale_client = client, scale_client
         self.bbw_options = bbw_options or {}
+        self.log = log
+        self._write_lock = asyncio.Lock()
         self.machine = None
         self.status = None
         self.setpoint = None
@@ -107,8 +109,9 @@ class Bridge:
                     entities.append(("button", f"bbw_dose{dose}", {"command_topic": f"{self.base}/cmd/bbw", "payload_press": str(dose)}))
         result = []
         for component, name, extra in entities:
-            config = {"name": name.replace("_", " "), "unique_id": f"profitec_{self.node}_{name}",
-                      "state_topic": f"{self.base}/state/{name}", **common, **extra}
+            config = {"name": name.replace("_", " "), "unique_id": f"profitec_{self.node}_{name}", **common, **extra}
+            if component != "button":
+                config["state_topic"] = f"{self.base}/state/{name}"
             result.append((f"homeassistant/{component}/profitec_{self.node}/{name}/config", json.dumps(config)))
         return result
 
@@ -182,6 +185,9 @@ class Bridge:
             else:
                 raise ValueError(f"Unknown command topic {topic}")
         except Exception as error:
+            # The client refuses work after a failed request; reconnect, never resend.
+            if self.machine is not None and self.machine.uncertain:
+                self._reconnect.set()
             await self.error(f"{type(error).__name__}: {error}")
 
     def _require_machine(self):
@@ -194,19 +200,20 @@ class Bridge:
             raise PermissionError("Settings writes need --journal-dir")
         machine = self._require_machine()
         value = _parse(name, payload)
+        setting_command(name, value)  # reject before touching the machine
         self.journal_dir.mkdir(parents=True, exist_ok=True)
-        journal = self.journal_dir / f"{_stamp()}-{name}.jsonl"
-        try:
-            blocks = await machine.apply_settings({name: value}, journal)
-        except Exception:
-            # Show what the machine reported, then reconnect: the client refuses work after a failure.
-            for line in reversed(journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []):
-                entry = json.loads(line)
-                if entry.get("event") == "readback":
-                    await self.publish_block(decode_settings(bytes.fromhex(entry["hex"])))
-                    break
-            self._reconnect.set()
-            raise
+        async with self._write_lock:
+            journal = self.journal_dir / f"{_stamp()}-{name}.jsonl"
+            try:
+                blocks = await machine.apply_settings({name: value}, journal)
+            except Exception:
+                # Show what the machine reported instead of the requested value.
+                for line in reversed(journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []):
+                    entry = json.loads(line)
+                    if entry.get("event") == "readback":
+                        await self.publish_block(decode_settings(bytes.fromhex(entry["hex"])))
+                        break
+                raise
         for block in blocks.values():
             await self.publish_block(block)
 
@@ -280,6 +287,7 @@ class Bridge:
                 await self.error(f"connection: {type(error).__name__}: {error}")
             finally:
                 self.machine = None
+                self.status = None  # never gate a brew on status from an earlier connection
                 if self.recorder:
                     self.recorder.close()
                 await self._send("availability", "offline", True)
@@ -297,7 +305,7 @@ class Bridge:
         loop = asyncio.get_running_loop()
 
         async def consume():
-            async with aclosing(machine.events(None, log=True)) as stream:
+            async with aclosing(machine.events(None, log=self.log)) as stream:
                 async for packet in stream:
                     await self.on_packet(packet, loop.time())
 
@@ -315,7 +323,7 @@ class Bridge:
 
     async def run_scale(self):
         if not self.scale_device:
-            return
+            await asyncio.Event().wait()
         backoff = min(2, self.max_backoff)
         while True:
             if self._release.is_set():
@@ -355,16 +363,22 @@ async def serve(device, host, port=1883, *, username=None, password=None, **opti
                 await mqtt.subscribe(f"{bridge.base}/set/#")
                 await mqtt.subscribe(f"{bridge.base}/cmd/#")
                 backoff = 2
-                tasks = [asyncio.create_task(bridge.run()), asyncio.create_task(bridge.run_scale())]
-                try:
+                async def receive():
                     async for message in mqtt.messages:
                         payload = message.payload.decode() if isinstance(message.payload, bytes) else str(message.payload)
                         bridge.handle(str(message.topic), payload, message.retain)
+
+                tasks = [asyncio.create_task(job) for job in (receive(), bridge.run(), bridge.run_scale())]
+                try:
+                    # Any loop ending (a publish failing inside run(), say) tears everything down and retries.
+                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        task.result()
                 finally:
                     for task in tasks:
                         task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
-        except aiomqtt.MqttError as error:
-            print(f"MQTT: {error}; retrying in {backoff} s", flush=True)
+        except Exception as error:
+            print(f"bridge: {type(error).__name__}: {error}; retrying in {backoff} s", flush=True)
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, 60)

@@ -93,6 +93,11 @@ class ProfitecClient:
         if client is not None:
             await client.disconnect()
 
+    @property
+    def uncertain(self) -> bool:
+        """True after a failed request or command; reconnect before the next operation."""
+        return self._uncertain
+
     def _connected(self):
         if self._client is None or not self._client.is_connected:
             raise ConnectionError("Use an active 'async with ProfitecClient(...)' connection")
@@ -166,7 +171,9 @@ class ProfitecClient:
                 if remaining <= 0:
                     break
                 try:
-                    packet = await asyncio.wait_for(queue.get(), min(remaining, 0.5))
+                    # Not wait_for: on 3.11 it can turn an outside cancel into TimeoutError (gh-86296).
+                    async with asyncio.timeout(min(remaining, 0.5)):
+                        packet = await queue.get()
                 except TimeoutError:
                     continue
                 yield packet
