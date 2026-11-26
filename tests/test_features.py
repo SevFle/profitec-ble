@@ -316,15 +316,6 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             await bridge.handle("profitec/aa_bb/cmd/brew", "1")
             self.assertEqual(bridge.machine.brews, [1])
 
-    async def test_settings_write_refused_while_brewing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bridge = await self.start(directory)
-            bridge.machine.status(92, 2)
-            await self.settle(bridge)
-            await bridge.handle("profitec/aa_bb/set/spotlight", "off")
-            self.assertIn("brewing", self.errors()[-1])
-            self.assertEqual(FakeClient.applies, [])
-
     async def test_release_refused_while_brewing_and_discovery_hides_brew_without_flag(self):
         with tempfile.TemporaryDirectory() as directory:
             bridge = await self.start(directory)
@@ -420,6 +411,19 @@ class RealClientTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(MachineBleak.instances[1].control, [])  # nothing resent
             finally:
                 runner.cancel()
+
+    async def test_settings_write_refused_while_brewing(self):
+        MachineBleak.instances.clear()
+        with patch("bleak.BleakClient", MachineBleak), tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory) / "j.jsonl"
+            async with ProfitecClient("fake", allow_experimental_settings=True) as machine:
+                fake = MachineBleak.instances[-1]
+                asyncio.get_running_loop().call_later(0.1, fake.status, 93, 2)
+                with self.assertRaisesRegex(RuntimeError, "brewing"):
+                    await machine.apply_settings({"spotlight": "off"}, journal)
+                self.assertFalse(machine.uncertain)
+            self.assertEqual(fake.control, [])
+            self.assertFalse(journal.exists())
 
     async def test_bbw_start_and_stop_on_one_real_connection(self):
         MachineBleak.instances.clear()

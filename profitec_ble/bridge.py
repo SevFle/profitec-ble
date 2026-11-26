@@ -172,9 +172,6 @@ class Bridge:
         if self.journal_dir is None:
             raise PermissionError("Settings writes need --journal-dir")
         machine = self._require_machine()
-        if self.status is not None and self.status.brewing:
-            # On hardware, writes during a brew lost their response and the module logged Modbus errors.
-            raise RuntimeError("Machine brewing; settings write refused")
         value = _parse(name, payload)
         setting_command(name, value)  # reject before touching the machine
         self.journal_dir.mkdir(parents=True, exist_ok=True)

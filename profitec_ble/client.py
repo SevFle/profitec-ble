@@ -4,7 +4,7 @@ import math
 import json
 import os
 from datetime import datetime, timezone
-from .protocol import PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, LOG_UUID, decode_settings, settings_request, brew_commands
+from .protocol import PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, LOG_UUID, decode_settings, decode_status, settings_request, brew_commands
 from .settings import SETTABLE, setting_command, schedule_command
 
 
@@ -256,7 +256,32 @@ class ProfitecClient:
                                          {"day_index": day_index, "slot": slot,
                                           "window": None if window is None else {"start": window.start, "stop": window.stop}})
 
+    async def _next_status(self, client, wait=2.0):
+        """The next status notification (about 1 Hz on hardware), or None if none arrives."""
+        future = asyncio.get_running_loop().create_future()
+
+        def receive(sender, data):
+            data = bytes(data)
+            if data[:2] == b"\x00\x0c" and not future.done():
+                try:
+                    future.set_result(decode_status(data))
+                except ValueError:
+                    pass
+
+        await self._listen(client, STATUS_UUID, receive)
+        try:
+            async with asyncio.timeout(wait):
+                return await future
+        except TimeoutError:
+            return None
+        finally:
+            await self._unlisten(client, STATUS_UUID, receive)
+
     async def _apply_changes(self, commands, journal, requested, preinfusion=False):
+        # A write during a brew took effect on hardware but lost its response; never write mid-shot.
+        status = await self._next_status(self._connected())
+        if status is not None and status.brewing:
+            raise RuntimeError("Machine is brewing; settings writes refused")
         client = self._begin()
         try:
             # Exclusive creation happens before any machine request or mutation.
