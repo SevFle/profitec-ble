@@ -57,7 +57,7 @@ async def scan(timeout: float = 10) -> list[dict]:
         {"device": device.address, "name": adv.local_name or device.name, "services": adv.service_uuids}
         for device, adv in devices.values()
         if any(s.startswith("873ae8") for s in adv.service_uuids)
-        or any(word in (adv.local_name or device.name or "").lower() for word in ("profitec", "ecm", "pressensor", "cfs-9002", "lsj-001"))
+        or any(word in (adv.local_name or device.name or "").lower() for word in ("profitec", "ecm", "pressensor"))
     ]
 
 

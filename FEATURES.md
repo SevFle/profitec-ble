@@ -15,7 +15,8 @@ This is a Bluetooth interoperability library, not a full replacement for the off
 | Live view, ready flag, per-shot recording, metrics, plots, shot index | CLI and Python API | Simulated transport and fixture tests; ready flag is derived, not a machine signal |
 | Profile diff, journal restore, compatibility report | CLI | Offline and simulated tests; restore uses the journaled write path |
 | MQTT / Home Assistant bridge | Optional `[mqtt]` extra | Simulated machine against a real MQTT broker; no hardware run yet |
-| Eureka Precisa scale and brew-by-weight | Experimental Python API and bridge buttons | Protocol facts from Beanconqueror; simulated tests only; timed-dose backstop |
+| Scale drivers, tare and scale pairing | Not included | Outside this library; `brew_by_weight` accepts any weight source |
+| Brew-by-weight logic | Experimental Python API taking any weight source | No scale driver included; simulated tests only; timed-dose backstop |
 | Device log (873ae829) | Raw capture only | Not decoded |
 | Weekday names | Guided `weekday-check` (writes and restores one window) | Needs an operator run |
 | Clock setting, calibration and firmware updates | Not implemented | Require separate protocol and recovery evidence |

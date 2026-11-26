@@ -6,11 +6,9 @@ import re
 from contextlib import aclosing, suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from .bbw import brew_by_weight
 from .client import ProfitecClient
-from .monitor import ReadyTracker, ShotRecorder, annotate_shot
+from .monitor import ReadyTracker, ShotRecorder
 from .protocol import LOG_UUID, MachineStatus, Pressure, decode, decode_settings
-from .scale import PrecisaScale
 from .settings import SETTABLE, setting_command, setting_value
 
 UNITS = {"temperature_c": "°C", "seconds": "s", "shots": "shots", "litres": "L", "minutes": "min"}
@@ -39,27 +37,21 @@ def _state(value):
 
 class Bridge:
     def __init__(self, device, publish, *, prefix="profitec", allow_remote_brew=False, journal_dir=None,
-                 shots_dir=None, scale=None, release_seconds=600, max_backoff=60, client=ProfitecClient,
-                 scale_client=PrecisaScale, bbw_options=None, log=False):
+                 shots_dir=None, release_seconds=600, max_backoff=60, client=ProfitecClient, log=False):
         self.device, self.publish = device, publish
         self.node = re.sub(r"[^A-Za-z0-9_]", "_", device).lower()
         self.base = f"{prefix}/{self.node}"
         self.allow_remote_brew = allow_remote_brew
         self.journal_dir = Path(journal_dir) if journal_dir else None
         self.recorder = ShotRecorder(shots_dir) if shots_dir else None
-        self.scale_device, self.scale = scale, None
         self.release_seconds, self.max_backoff = release_seconds, max_backoff
-        self.client, self.scale_client = client, scale_client
-        self.bbw_options = bbw_options or {}
+        self.client = client
         self.log = log
         self._write_lock = asyncio.Lock()
         self.machine = None
         self.status = None
         self.setpoint = None
         self.ready = None
-        self.bbw_target = 36.0
-        self.bbw_task = None
-        self.last_shot = None
         self._release = asyncio.Event()
         self._reconnect = asyncio.Event()
         self._tasks = set()
@@ -84,8 +76,6 @@ class Bridge:
             ("binary_sensor", "ready", {}),
             ("switch", "release_bluetooth", {"command_topic": f"{self.base}/cmd/release"}),
         ]
-        if self.scale_device:
-            entities.append(("sensor", "weight", {"unit_of_measurement": "g", "device_class": "weight", "state_class": "measurement"}))
         for name, spec in SETTABLE.items():
             writable = self.journal_dir is not None
             if not writable:
@@ -102,11 +92,6 @@ class Bridge:
         if self.allow_remote_brew:
             for label in ("1", "2", "manual", "stop"):
                 entities.append(("button", f"brew_{label}", {"command_topic": f"{self.base}/cmd/brew", "payload_press": label}))
-            if self.scale_device and self.journal_dir:
-                entities.append(("number", "bbw_target_g", {"command_topic": f"{self.base}/set/bbw_target_g",
-                                                            "min": 1, "max": 200, "step": 0.1, "unit_of_measurement": "g", "mode": "box"}))
-                for dose in (1, 2):
-                    entities.append(("button", f"bbw_dose{dose}", {"command_topic": f"{self.base}/cmd/bbw", "payload_press": str(dose)}))
         result = []
         for component, name, extra in entities:
             config = {"name": name.replace("_", " "), "unique_id": f"profitec_{self.node}_{name}", **common, **extra}
@@ -118,7 +103,6 @@ class Bridge:
     async def announce(self):
         for topic, payload in self.discovery():
             await self.publish(topic, payload, True)
-        await self._send("state/bbw_target_g", str(self.bbw_target))
 
     # Telemetry -------------------------------------------------------------------------------
     async def publish_block(self, block):
@@ -132,9 +116,7 @@ class Bridge:
 
     async def on_packet(self, packet, now):
         if self.recorder:
-            finished = self.recorder.feed(packet)
-            if finished:
-                self.last_shot = finished
+            self.recorder.feed(packet)
         if packet["uuid"] == LOG_UUID:
             await self._send("log", packet["hex"])
             return
@@ -172,14 +154,6 @@ class Bridge:
                 await self._release_bluetooth(payload)
             elif command == "cmd/brew":
                 await self._brew(payload)
-            elif command == "cmd/bbw":
-                await self._bbw(payload)
-            elif command == "set/bbw_target_g":
-                target = float(payload)
-                if not 1 <= target <= 200:
-                    raise ValueError("Target must be 1-200 g")
-                self.bbw_target = target
-                await self._send("state/bbw_target_g", str(target))
             elif command.startswith("set/") and command[4:] in SETTABLE:
                 await self._set(command[4:], payload)
             else:
@@ -227,8 +201,6 @@ class Bridge:
             raise RuntimeError(f"Machine busy (state {self.status.state}); refusing remote brew")
         if abs(self.status.coffee_temperature - self.setpoint) > BREW_GATE_C:
             raise RuntimeError("Coffee boiler not within 2 °C of setpoint; refusing remote brew")
-        if self.bbw_task and not self.bbw_task.done():
-            raise RuntimeError("Brew-by-weight running")
         return machine
 
     async def _brew(self, payload):
@@ -241,26 +213,6 @@ class Bridge:
         if dose is None:
             raise ValueError("Brew payload must be 1, 2, manual or stop")
         await self._gate().brew(dose)
-
-    async def _bbw(self, payload):
-        if self.journal_dir is None or self.scale is None:
-            raise RuntimeError("Brew-by-weight needs --journal-dir and a connected scale")
-        if payload.startswith("{"):
-            request = json.loads(payload)
-            target, dose = float(request["target_g"]), request["dose"]
-        else:
-            target, dose = self.bbw_target, {"1": 1, "2": 2}.get(payload)
-        machine = self._gate()
-        self.journal_dir.mkdir(parents=True, exist_ok=True)
-        journal = self.journal_dir / f"{_stamp()}-bbw.jsonl"
-        self.bbw_task = asyncio.current_task()
-        result = await brew_by_weight(machine, self.scale, target, dose, journal, **self.bbw_options)
-        await self._send("bbw", result)
-        if result["warning"]:
-            await self.error(result["warning"])
-        if self.recorder and self.last_shot:
-            annotate_shot(self.recorder.directory, self.last_shot.name,
-                          target_g=target, final_weight_g=result["final_weight_g"])
 
     async def _release_bluetooth(self, payload):
         if payload != "ON":
@@ -321,32 +273,6 @@ class Bridge:
                 with suppress(asyncio.CancelledError):
                     await task
 
-    async def run_scale(self):
-        if not self.scale_device:
-            await asyncio.Event().wait()
-        backoff = min(2, self.max_backoff)
-        while True:
-            if self._release.is_set():
-                await asyncio.sleep(1)
-                continue
-            try:
-                async with self.scale_client(self.scale_device) as scale:
-                    self.scale = scale
-                    backoff = 2
-                    last = None
-                    while scale.connected and not self._release.is_set():
-                        if scale.weight != last:
-                            last = scale.weight
-                            await self._send("state/weight", str(last))
-                        await asyncio.sleep(0.2)
-            except Exception as error:
-                await self.error(f"scale: {type(error).__name__}: {error}")
-            finally:
-                self.scale = None
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, self.max_backoff)
-
-
 async def serve(device, host, port=1883, *, username=None, password=None, **options):
     import aiomqtt
     backoff = 2
@@ -368,7 +294,7 @@ async def serve(device, host, port=1883, *, username=None, password=None, **opti
                         payload = message.payload.decode() if isinstance(message.payload, bytes) else str(message.payload)
                         bridge.handle(str(message.topic), payload, message.retain)
 
-                tasks = [asyncio.create_task(job) for job in (receive(), bridge.run(), bridge.run_scale())]
+                tasks = [asyncio.create_task(job) for job in (receive(), bridge.run())]
                 try:
                     # Any loop ending (a publish failing inside run(), say) tears everything down and retries.
                     done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

@@ -121,7 +121,7 @@ def plot_html(paths, destination):
     legend = "".join(f'<li style="color:{COLORS[i]}">{escape(name)}</li>' for i, (name, _) in enumerate(series))
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="Pressure over time">'
            + "".join(grid) + f'<text x="{width/2}" y="{height-8}" font-size="12" text-anchor="middle">seconds since brew start (0–{max_t:.0f})</text>'
-           + f'<text x="4" y="14" font-size="12">bar</text>' + "".join(lines) + "</svg>")
+           + '<text x="4" y="14" font-size="12">bar</text>' + "".join(lines) + "</svg>")
     with open(destination, "x", encoding="utf-8") as output:
         output.write(f'<!doctype html><meta charset="utf-8"><title>Shot pressure</title>'
                      f'<body style="font-family:sans-serif;max-width:{width}px">{svg}<ul>{legend}</ul></body>\n')

@@ -1,5 +1,8 @@
-"""EXPERIMENTAL brew-by-weight. A timed dose is always the backstop: when the scale goes silent the
-shot continues and the machine ends it at its dose time. One stop command at most; never retried."""
+"""EXPERIMENTAL brew-by-weight. A timed dose is always the backstop: when the weight source goes silent
+the shot continues and the machine ends it at its dose time. One stop command at most; never retried.
+
+No scale driver is included. `scale` is any object with `weight` (grams), `age` (seconds since the
+last reading, infinite when none) and `async tare()`."""
 import asyncio
 import json
 import math

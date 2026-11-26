@@ -23,8 +23,6 @@ from .settings import schedule_command, setting_value
 from .profiles import profile_diff, restore_plan
 from .shots import metrics, plot_html
 from .monitor import ReadyTracker, ShotRecorder, annotate_shot, list_shots, reindex
-from .scale import PrecisaScale, decode_weight
 from .bbw import brew_by_weight
 __all__ += ["schedule_command", "setting_value", "profile_diff", "restore_plan", "metrics", "plot_html",
-            "ReadyTracker", "ShotRecorder", "annotate_shot", "list_shots", "reindex", "PrecisaScale",
-            "decode_weight", "brew_by_weight"]
+            "ReadyTracker", "ShotRecorder", "annotate_shot", "list_shots", "reindex", "brew_by_weight"]

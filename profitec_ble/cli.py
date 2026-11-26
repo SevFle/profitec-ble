@@ -128,7 +128,7 @@ async def run(args):
         await serve(args.device, args.mqtt_host, args.mqtt_port, username=args.mqtt_user,
                     password=os.environ.get(args.mqtt_password_env) if args.mqtt_password_env else None,
                     prefix=args.prefix, allow_remote_brew=args.allow_remote_brew, journal_dir=args.journal_dir,
-                    shots_dir=args.shots_dir, scale=args.scale, log=args.log)
+                    shots_dir=args.shots_dir, log=args.log)
         return
     if args.command == "export-csv":
         export_csv(args.input, args.output)
@@ -277,12 +277,11 @@ def main():
     command.add_argument("--mqtt-user")
     command.add_argument("--mqtt-password-env", help="name of the environment variable holding the password")
     command.add_argument("--prefix", default="profitec")
-    command.add_argument("--journal-dir", help="enables settings writes and brew-by-weight; one new journal per write")
+    command.add_argument("--journal-dir", help="enables settings writes; one new journal per write")
     command.add_argument("--shots-dir", help="record each shot to this directory")
-    command.add_argument("--scale", help="Eureka Precisa address or UUID")
     command.add_argument("--log", action="store_true", help="publish raw device-log indications (unverified)")
     command.add_argument("--allow-remote-brew", action="store_true",
-                         help="EXPERIMENTAL: expose brew and brew-by-weight; gated on idle state and temperature")
+                         help="EXPERIMENTAL: expose brew start/stop; gated on idle state and temperature")
     command = commands.add_parser("decode")
     command.add_argument("uuid")
     command.add_argument("hex")

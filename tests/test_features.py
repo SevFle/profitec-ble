@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from profitec_ble import (
     ProfitecClient, ReadyTracker, ShotRecorder, brew_by_weight, decode_settings, decode_status,
-    decode_weight, list_shots, metrics, profile_diff, restore_plan, annotate_shot,
+    list_shots, metrics, profile_diff, restore_plan, annotate_shot,
 )
 from profitec_ble.bridge import Bridge
 
@@ -106,16 +106,6 @@ class OfflineFeatureTests(unittest.TestCase):
         self.assertTrue(tracker.update(status(92), 61))
         self.assertFalse(tracker.update(status(92, 8), 62))  # brewing turns it off
         self.assertFalse(tracker.update(status(93), 63))     # hold restarts
-
-    def test_precisa_weight_decoding(self):
-        packet = bytearray(11)
-        packet[7:9] = (365).to_bytes(2, "little")
-        self.assertEqual(decode_weight(packet), 36.5)
-        packet[6] = 1
-        self.assertEqual(decode_weight(packet), -36.5)
-        with self.assertRaises(ValueError):
-            decode_weight(b"\x00" * 10)
-
 
 class FakeScale:
     def __init__(self):
