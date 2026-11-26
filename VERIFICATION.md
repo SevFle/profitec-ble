@@ -47,7 +47,7 @@ Public-release preparation on 2026-11-25:
     - Runs 1 and 2 sent a spotlight write during the brew. Each write took effect, but its ATT response never came. Run 1 hung (control writes had no timeout); run 2 raised `TimeoutError` after the new 5 s write timeout. Spotlight was restored and verified after each run.
     - The device log showed `Modbus RX … CRC error` and `Modbus response timeout` lines in both runs, and status notifications stopped for 5 s in run 2. Run 2's errors began before the write was sent.
     - Run 3 sent no settings write: no Modbus errors and no status gaps.
-    - Cause not settled. `apply_settings` and `apply_schedule` now refuse to write while the machine reports brewing. An idle no-op write on hardware passed the new check.
+    - Cause not settled. `apply_settings` and `apply_schedule` now refuse to write while the machine reports brewing. The guard is covered by a simulated test; it has not yet run on hardware.
   - Device log (`873ae829`): NUL-terminated ASCII lines from the sensor module (module firmware v3.17, battery 3000 mV), now decoded as `DeviceLog`.
   - Pressure zero: on every connection the module runs `ZeroCalculation` and takes the absolute pressure then as zero (`Zero press: 1014mbar`). The -0.35 bar idle reading came from a connection made mid-brew. Connected while idle, the machine reads 0.00 bar.
   - The machine accepts one Bluetooth central. Other local apps holding it make it stop advertising.
