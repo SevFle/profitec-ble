@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .client import ProfitecClient
 from .monitor import ReadyTracker, ShotRecorder
-from .protocol import LOG_UUID, MachineStatus, Pressure, decode, decode_settings
+from .protocol import DeviceLog, MachineStatus, Pressure, decode, decode_settings
 from .settings import SETTABLE, setting_command, setting_value
 
 UNITS = {"temperature_c": "°C", "seconds": "s", "shots": "shots", "litres": "L", "minutes": "min"}
@@ -117,15 +117,14 @@ class Bridge:
     async def on_packet(self, packet, now):
         if self.recorder:
             self.recorder.feed(packet)
-        if packet["uuid"] == LOG_UUID:
-            await self._send("log", packet["hex"])
-            return
         try:
             value = decode(packet["uuid"], bytes.fromhex(packet["hex"]))
         except ValueError as error:
             await self.error(f"decode: {error}")
             return
-        if isinstance(value, Pressure):
+        if isinstance(value, DeviceLog):
+            await self._send("log", value.text)
+        elif isinstance(value, Pressure):
             await self._send("state/pressure", str(value.bar))
         elif isinstance(value, MachineStatus):
             self.status = value
@@ -173,6 +172,9 @@ class Bridge:
         if self.journal_dir is None:
             raise PermissionError("Settings writes need --journal-dir")
         machine = self._require_machine()
+        if self.status is not None and self.status.brewing:
+            # On hardware, writes during a brew lost their response and the module logged Modbus errors.
+            raise RuntimeError("Machine brewing; settings write refused")
         value = _parse(name, payload)
         setting_command(name, value)  # reject before touching the machine
         self.journal_dir.mkdir(parents=True, exist_ok=True)

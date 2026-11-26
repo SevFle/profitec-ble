@@ -37,7 +37,11 @@ Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or
 
 ## Device log
 
-`873ae829` indications are captured raw by `record --log` and published raw by the bridge. Their format is unknown.
+`873ae829` indications are NUL-terminated ASCII lines from the Bluetooth sensor module, for example `[02:38:03.847,656] <info> app: Zero press: 1014mbar`. `decode` returns them as `DeviceLog`. Observed lines report module firmware, battery, connection events, measurement state, the zero-pressure reference, and Modbus errors on the module's link to the machine.
+
+Pressure is relative: on each connection the module runs `ZeroCalculation` and takes the absolute pressure at that moment as zero. Connect while the machine is idle. A connection made during a shot gives a shifted zero (-0.35 bar was observed afterwards).
+
+Status state 1 was observed during a remote dose 1, state 2 during dose 2, and state 8 during manual brewing.
 
 ## Remaining features
 

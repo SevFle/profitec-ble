@@ -107,6 +107,15 @@ class OfflineFeatureTests(unittest.TestCase):
         self.assertFalse(tracker.update(status(92, 8), 62))  # brewing turns it off
         self.assertFalse(tracker.update(status(93), 63))     # hold restarts
 
+class DeviceLogTests(unittest.TestCase):
+    def test_log_indication_decodes_to_text(self):
+        # Captured from the machine: "[...] <info> app: Zero press: 1014mbar\r\n" plus NUL.
+        raw = b"[02:38:03.847,656] <info> app: Zero press: 1014mbar\r\n\x00"
+        result = cli("decode", "873ae829-4c5a-4342-b539-9d900bf7ebd0", raw.hex())
+        decoded = json.loads(result.stdout)["decoded"]
+        self.assertEqual(decoded, {"type": "DeviceLog", "text": "[02:38:03.847,656] <info> app: Zero press: 1014mbar"})
+
+
 class FakeScale:
     def __init__(self):
         self.weight, self.age, self.tares = 0.0, 0.1, 0
@@ -307,6 +316,15 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             await bridge.handle("profitec/aa_bb/cmd/brew", "1")
             self.assertEqual(bridge.machine.brews, [1])
 
+    async def test_settings_write_refused_while_brewing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = await self.start(directory)
+            bridge.machine.status(92, 2)
+            await self.settle(bridge)
+            await bridge.handle("profitec/aa_bb/set/spotlight", "off")
+            self.assertIn("brewing", self.errors()[-1])
+            self.assertEqual(FakeClient.applies, [])
+
     async def test_release_refused_while_brewing_and_discovery_hides_brew_without_flag(self):
         with tempfile.TemporaryDirectory() as directory:
             bridge = await self.start(directory)
@@ -448,7 +466,21 @@ class SharedNotifyBleak:
             self.callbacks[STATUS_UUID](Sender(STATUS_UUID), GENERAL)
 
 
+class SilentWire(SharedNotifyBleak):
+    async def write_gatt_char(self, uuid, data, response=True):
+        self.writes.append(bytes(data).hex())
+        await asyncio.sleep(3600)  # ATT response never arrives, as seen during a brew on hardware
+
+
 class ClientConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lost_write_response_fails_instead_of_hanging(self):
+        machine = ProfitecClient("fake", allow_experimental_controls=True)
+        machine._client = SilentWire()
+        with patch("profitec_ble.client.WRITE_TIMEOUT", 0.1):
+            with self.assertRaises(TimeoutError):
+                await asyncio.wait_for(machine.brew(None), 2)
+        self.assertTrue(machine.uncertain)
+
     async def test_stream_read_and_stop_share_one_connection(self):
         machine = ProfitecClient("fake", allow_experimental_controls=True)
         fake = machine._client = SharedNotifyBleak()

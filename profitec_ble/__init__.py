@@ -1,14 +1,14 @@
 """Profitec BLE protocol and async client. Machine writes require explicit opt-in."""
 from .protocol import (
     PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, LOG_UUID,
-    Pressure, MachineStatus, SettingsBlock, RawPacket,
-    decode, decode_pressure, decode_status, decode_settings, settings_request, brew_commands,
+    Pressure, MachineStatus, SettingsBlock, RawPacket, DeviceLog,
+    decode, decode_log, decode_pressure, decode_status, decode_settings, settings_request, brew_commands,
 )
 from .client import ProfitecClient, scan
 
 __all__ = [
     "PRESSURE_UUID", "STATUS_UUID", "CONTROL_UUID", "LOG_UUID", "Pressure",
-    "MachineStatus", "SettingsBlock", "RawPacket", "decode", "decode_pressure",
+    "MachineStatus", "SettingsBlock", "RawPacket", "DeviceLog", "decode", "decode_log", "decode_pressure",
     "decode_status", "decode_settings", "settings_request", "brew_commands", "ProfitecClient", "scan",
 ]
 

@@ -8,6 +8,11 @@ from .protocol import PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, LOG_UUID, decode
 from .settings import SETTABLE, setting_command, schedule_command
 
 
+# On hardware a settings write sent during a brew took effect but its ATT response never came.
+# Bound every write so a lost response fails instead of hanging.
+WRITE_TIMEOUT = 5
+
+
 def positive(value: float) -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError("Duration must be finite and positive")
@@ -102,6 +107,10 @@ class ProfitecClient:
         if self._client is None or not self._client.is_connected:
             raise ConnectionError("Use an active 'async with ProfitecClient(...)' connection")
         return self._client
+
+    async def _write(self, client, uuid, data):
+        async with asyncio.timeout(WRITE_TIMEOUT):
+            await client.write_gatt_char(uuid, data, response=True)
 
     async def _listen(self, client, uuid, callback):
         # One GATT subscription per characteristic, fanned out to every stream and request.
@@ -258,7 +267,7 @@ class ProfitecClient:
                     os.fsync(log.fileno())
 
                 async def write(command):
-                    await client.write_gatt_char(CONTROL_UUID, command, response=True)
+                    await self._write(client, CONTROL_UUID, command)
 
                 return await apply_verified_changes(commands, requested, self._request_settings, write, record, self.device, preinfusion)
         except BaseException:
@@ -276,7 +285,7 @@ class ProfitecClient:
             # Stop must never wait behind a settings request or a previous failure.
             client = self._connected()
             try:
-                await client.write_gatt_char(CONTROL_UUID, commands[0], response=True)
+                await self._write(client, CONTROL_UUID, commands[0])
             except BaseException:
                 self._uncertain = True
                 raise
@@ -284,7 +293,7 @@ class ProfitecClient:
         client = self._begin()
         try:
             for command in commands:
-                await client.write_gatt_char(CONTROL_UUID, command, response=True)
+                await self._write(client, CONTROL_UUID, command)
         except BaseException:
             self._uncertain = True
             raise

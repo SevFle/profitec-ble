@@ -40,6 +40,12 @@ class SettingsBlock:
 
 
 @dataclass(frozen=True)
+class DeviceLog:
+    text: str
+    raw: bytes
+
+
+@dataclass(frozen=True)
 class RawPacket:
     uuid: str
     raw: bytes
@@ -81,10 +87,18 @@ def decode_settings(data: bytes) -> SettingsBlock:
     return SettingsBlock(address, tuple(_word(data, i) for i in range(2, len(data), 2)), data)
 
 
-def decode(uuid: str, data: bytes) -> Pressure | MachineStatus | SettingsBlock | RawPacket:
+def decode_log(data: bytes) -> DeviceLog:
+    """Device-log indications are NUL-terminated ASCII lines from the sensor module."""
+    data = bytes(data)
+    return DeviceLog(data.split(b"\0", 1)[0].decode("ascii", "replace").rstrip("\r\n"), data)
+
+
+def decode(uuid: str, data: bytes) -> Pressure | MachineStatus | SettingsBlock | DeviceLog | RawPacket:
     uuid = str(UUID(uuid))
     if uuid == PRESSURE_UUID:
         return decode_pressure(data)
+    if uuid == LOG_UUID:
+        return decode_log(data)
     if uuid == STATUS_UUID:
         if data[:2] == b"\x00\x0c":
             return decode_status(data)

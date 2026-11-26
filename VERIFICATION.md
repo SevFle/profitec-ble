@@ -43,9 +43,16 @@ Public-release preparation on 2026-11-25:
   - `report` read all four blocks; named decoding succeeded for each. The clock weekday code was 5 on a Thursday (host time). Device-log characteristic `873ae829` exists with `indicate`; it was not subscribed.
   - `watch` streamed 20 s: state 1 at 110 °C coffee, then state 0 as the boiler fell to 89 °C (setpoint 92). Ready stayed off, as expected outside ±1 °C. Idle pressure read -0.35 bar, an offset that has not been explained.
   - Supervised remote timed dose 1: start acknowledged after 0.15 s, state 1 reported 0.07 s later. Stop sent 5 s after start, with a general-settings read in flight on the same connection. The stop and the read were both acknowledged, and state 0 followed within 1 s. No retry was sent. This was one run, not a reliability measurement.
+  - Supervised remote timed dose 2, three runs: state 2 while brewing, and the stop returned state 0 every time.
+    - Runs 1 and 2 sent a spotlight write during the brew. Each write took effect, but its ATT response never came. Run 1 hung (control writes had no timeout); run 2 raised `TimeoutError` after the new 5 s write timeout. Spotlight was restored and verified after each run.
+    - The device log showed `Modbus RX … CRC error` and `Modbus response timeout` lines in both runs, and status notifications stopped for 5 s in run 2. Run 2's errors began before the write was sent.
+    - Run 3 sent no settings write: no Modbus errors and no status gaps.
+    - Cause not settled. The bridge now refuses settings writes while brewing.
+  - Device log (`873ae829`): NUL-terminated ASCII lines from the sensor module (module firmware v3.17, battery 3000 mV), now decoded as `DeviceLog`.
+  - Pressure zero: on every connection the module runs `ZeroCalculation` and takes the absolute pressure then as zero (`Zero press: 1014mbar`). The -0.35 bar idle reading came from a connection made mid-brew. Connected while idle, the machine reads 0.00 bar.
   - The machine accepts one Bluetooth central. Other local apps holding it make it stop advertising.
 - No Home Assistant instance has consumed the discovery messages yet.
-- None of the 0.3 features have run against the machine or a scale yet. Hardware checklist: device-log subscribe, remote timed-dose start, stop during a timed dose, stop sent while a settings write is in flight on `873ae834`, and one bridge session with Home Assistant.
+- None of the 0.3 features have run against the machine or a scale yet. Hardware checklist: device-log subscribe, remote timed-dose start, stop during a timed dose, and one bridge session with Home Assistant.
 
 ## Unverified
 
