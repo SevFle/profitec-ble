@@ -33,7 +33,15 @@ These requests and response lengths were observed in connection captures. Firmwa
 
 ## Brew commands (experimental)
 
-Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or `00650008` (manual). Stop writes `0065000a`. The captured dose-1 shot contains the first, second and stop payloads. Library manual start/stop was exercised once on hardware; timed-dose execution remains unverified. Multi-command start is not atomic; a timeout may occur after a command took effect.
+Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or `00650008` (manual). Stop writes `0065000a`. The captured dose-1 shot contains the first, second and stop payloads. Library manual start/stop was exercised once on hardware; one supervised remote dose-1 start and stop reported state 1, then 0; dose 2 remains unexercised. Multi-command start is not atomic; a timeout may occur after a command took effect.
+
+## Device log
+
+`873ae829` indications are NUL-terminated ASCII lines from the Bluetooth sensor module, for example `[02:38:03.847,656] <info> app: Zero press: 1014mbar`. `decode` returns them as `DeviceLog`. Observed lines report module firmware, battery, connection events, measurement state, the zero-pressure reference, and Modbus errors on the module's link to the machine.
+
+Pressure is relative: on each connection the module runs `ZeroCalculation` and takes the absolute pressure at that moment as zero. Connect while the machine is idle. A connection made during a shot gives a shifted zero (-0.35 bar was observed afterwards).
+
+Status state 1 was observed during a remote dose 1, state 2 during dose 2, and state 8 during manual brewing.
 
 ## Remaining features
 

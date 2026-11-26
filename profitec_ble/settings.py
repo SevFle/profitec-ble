@@ -146,21 +146,23 @@ def setting_command(name: str, value) -> bytes:
     return spec.register.to_bytes(2, "big") + spec.encode(value).to_bytes(2, "big", signed=True)
 
 
+def setting_value(name: str, block: SettingsBlock):
+    spec = SETTABLE[name]
+    word = block.words[spec.register - block.address]
+    if spec.choices:
+        if not 0 <= word < len(spec.choices):
+            raise ValueError(f"Unknown value for {name}: {word}")
+        value = spec.choices[word]
+    else:
+        value = float(Decimal(word) / Decimal(str(spec.scale)))
+    # Profiles must contain values that the library can safely write back.
+    setting_command(name, value)
+    return value
+
+
 def setting_values(blocks: dict[str, SettingsBlock]) -> dict:
-    result = {}
-    for name, spec in SETTABLE.items():
-        block = blocks[spec.block]
-        word = block.words[spec.register - block.address]
-        if spec.choices:
-            if not 0 <= word < len(spec.choices):
-                raise ValueError(f"Unknown value for {name}: {word}")
-            value = spec.choices[word]
-        else:
-            value = float(Decimal(word) / Decimal(str(spec.scale)))
-        # Profiles must contain values that the library can safely write back.
-        setting_command(name, value)
-        result[name] = value
-    return result
+    return {name: setting_value(name, blocks[spec.block]) for name, spec in SETTABLE.items()
+            if spec.block in blocks}
 
 
 def schedule_command(day_index: int, slot: int, window: ScheduleWindow | None) -> bytes:

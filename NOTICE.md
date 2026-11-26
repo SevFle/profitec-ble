@@ -8,4 +8,4 @@ All rights in ECM/Profitec products, original software, firmware, branding, and 
 
 Protocol documentation describes the messages needed for interoperability. Compatibility has been exercised on one MOVE 2.0 with firmware 2.02 on macOS. Other machines, firmware versions, and host Bluetooth stacks require verification. No calibration, firmware flashing, access-control bypass, or official cloud-account integration is implemented.
 
-Dependencies are installed separately and retain their own licenses. Bleak is MIT-licensed; its macOS PyObjC dependencies are also MIT-licensed. No dependency source is vendored here. Consult the licenses included with the installed distributions for their full terms.
+Dependencies are installed separately and retain their own licenses. Bleak is MIT-licensed; its macOS PyObjC dependencies are also MIT-licensed. The optional `mqtt` extra installs aiomqtt (BSD-3-Clause) and its paho-mqtt dependency (EPL-2.0 / EDL-1.0). No dependency source is vendored here.
