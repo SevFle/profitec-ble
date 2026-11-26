@@ -4,7 +4,7 @@ import math
 import json
 import os
 from datetime import datetime, timezone
-from .protocol import PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, decode_settings, settings_request, brew_commands
+from .protocol import PRESSURE_UUID, STATUS_UUID, CONTROL_UUID, LOG_UUID, decode_settings, settings_request, brew_commands
 from .settings import SETTABLE, setting_command, schedule_command
 
 
@@ -57,7 +57,7 @@ async def scan(timeout: float = 10) -> list[dict]:
         {"device": device.address, "name": adv.local_name or device.name, "services": adv.service_uuids}
         for device, adv in devices.values()
         if any(s.startswith("873ae8") for s in adv.service_uuids)
-        or any(word in (adv.local_name or device.name or "").lower() for word in ("profitec", "ecm", "pressensor"))
+        or any(word in (adv.local_name or device.name or "").lower() for word in ("profitec", "ecm", "pressensor", "cfs-9002", "lsj-001"))
     ]
 
 
@@ -70,6 +70,7 @@ class ProfitecClient:
         self._client = None
         self._busy = False
         self._uncertain = False
+        self._listeners = {}
 
     async def __aenter__(self):
         from bleak import BleakClient
@@ -84,6 +85,7 @@ class ProfitecClient:
             raise
         self._client = client
         self._uncertain = False
+        self._listeners = {}
         return self
 
     async def __aexit__(self, *exc):
@@ -96,10 +98,33 @@ class ProfitecClient:
             raise ConnectionError("Use an active 'async with ProfitecClient(...)' connection")
         return self._client
 
+    async def _listen(self, client, uuid, callback):
+        # One GATT subscription per characteristic, fanned out to every stream and request.
+        listeners = self._listeners.setdefault(uuid, [])
+        listeners.append(callback)
+        if len(listeners) == 1:
+            def dispatch(sender, data):
+                for listener in list(self._listeners.get(uuid, ())):
+                    listener(sender, data)
+            try:
+                await client.start_notify(uuid, dispatch)
+            except BaseException:
+                listeners.remove(callback)
+                raise
+
+    async def _unlisten(self, client, uuid, callback):
+        listeners = self._listeners.get(uuid, [])
+        if callback in listeners:
+            listeners.remove(callback)
+            if not listeners:
+                del self._listeners[uuid]
+                if client.is_connected:
+                    await client.stop_notify(uuid)
+
     def _begin(self):
         client = self._connected()
         if self._busy:
-            raise RuntimeError("Only one stream, settings request, or control operation may run at a time")
+            raise RuntimeError("Only one settings request or control operation may run at a time")
         if self._uncertain:
             raise RuntimeError("Previous request failed; reconnect before another operation")
         self._busy = True
@@ -110,10 +135,12 @@ class ProfitecClient:
             {"uuid": c.uuid, "properties": list(c.properties)} for c in s.characteristics
         ]} for s in self._connected().services]
 
-    async def events(self, seconds: float = 60):
-        """Yield raw timestamped packets. Slow consumers fail instead of silently losing data."""
-        positive(seconds)
-        client = self._begin()
+    async def events(self, seconds: float | None = 60, *, log: bool = False):
+        """Yield raw timestamped packets; None streams until disconnect. Several streams may run
+        beside one request or control operation. Slow consumers fail instead of silently losing data."""
+        if seconds is not None:
+            positive(seconds)
+        client = self._connected()
         queue = asyncio.Queue(maxsize=1024)
         overflow = False
         subscribed = []
@@ -126,10 +153,10 @@ class ProfitecClient:
                 overflow = True
 
         try:
-            for uuid in (PRESSURE_UUID, STATUS_UUID):
-                await client.start_notify(uuid, receive)
+            for uuid in (PRESSURE_UUID, STATUS_UUID) + ((LOG_UUID,) if log else ()):
+                await self._listen(client, uuid, receive)
                 subscribed.append(uuid)
-            end = asyncio.get_running_loop().time() + seconds
+            end = asyncio.get_running_loop().time() + (math.inf if seconds is None else seconds)
             while True:
                 if overflow:
                     raise BufferError("Telemetry consumer fell behind; capture is incomplete")
@@ -144,12 +171,8 @@ class ProfitecClient:
                     continue
                 yield packet
         finally:
-            try:
-                if client.is_connected:
-                    for uuid in subscribed:
-                        await client.stop_notify(uuid)
-            finally:
-                self._busy = False
+            for uuid in subscribed:
+                await self._unlisten(client, uuid, receive)
 
     async def read_settings(self, name: str, *, timeout: float = 5):
         """Request a register block. No automatic retries after timeout."""
@@ -178,7 +201,7 @@ class ProfitecClient:
                     future.set_exception(error)
 
         try:
-            await client.start_notify(STATUS_UUID, receive)
+            await self._listen(client, STATUS_UUID, receive)
             subscribed = True
             async with asyncio.timeout(timeout):
                 await client.write_gatt_char(STATUS_UUID, request, response=True)
@@ -188,8 +211,8 @@ class ProfitecClient:
                 future.cancel()
             elif not future.cancelled():
                 future.exception()  # Consume a callback error if the request write itself failed.
-            if subscribed and client.is_connected:
-                await client.stop_notify(STATUS_UUID)
+            if subscribed:
+                await self._unlisten(client, STATUS_UUID, receive)
 
     async def apply_settings(self, values: dict, journal):
         """Apply allowlisted settings, preserving a durable before-image and verifying each write.
@@ -242,6 +265,15 @@ class ProfitecClient:
         commands = brew_commands(dose)
         if not self.allow_experimental_controls:
             raise PermissionError("Experimental controls disabled; opt in explicitly at construction")
+        if dose is None:
+            # Stop must never wait behind a settings request or a previous failure.
+            client = self._connected()
+            try:
+                await client.write_gatt_char(CONTROL_UUID, commands[0], response=True)
+            except BaseException:
+                self._uncertain = True
+                raise
+            return
         client = self._begin()
         try:
             for command in commands:

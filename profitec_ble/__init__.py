@@ -19,5 +19,12 @@ from .settings import named_settings, setting_command, setting_values, SETTABLE,
 from .profiles import load_profile, save_profile
 __all__ += ["named_settings", "setting_command", "setting_values", "SETTABLE", "DoseSettings", "GeneralSettings", "TimeSettings", "PreInfusion", "ScheduleWindow", "load_profile", "save_profile"]
 
-from .settings import schedule_command
-__all__ += ["schedule_command"]
+from .settings import schedule_command, setting_value
+from .profiles import profile_diff, restore_plan
+from .shots import metrics, plot_html
+from .monitor import ReadyTracker, ShotRecorder, annotate_shot, list_shots, reindex
+from .scale import PrecisaScale, decode_weight
+from .bbw import brew_by_weight
+__all__ += ["schedule_command", "setting_value", "profile_diff", "restore_plan", "metrics", "plot_html",
+            "ReadyTracker", "ShotRecorder", "annotate_shot", "list_shots", "reindex", "PrecisaScale",
+            "decode_weight", "brew_by_weight"]

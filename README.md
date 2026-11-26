@@ -57,9 +57,9 @@ Pure functions: `decode_pressure`, `decode_status`, `decode_settings`, `settings
 
 ## Experimental controls
 
-`brew_commands(dose)` generates bytes offline: `1` and `2` select doses, `0` selects manual brew, and `None` stops. `ProfitecClient.brew(dose)` refuses execution unless constructed with `allow_experimental_controls=True`. There is intentionally no control CLI. Bluetooth acknowledgement does not prove that the machine started or stopped. Do not retry an uncertain brew command automatically. Keep physical control of the machine when testing.
+`brew_commands(dose)` generates bytes offline: `1` and `2` select doses, `0` selects manual brew, and `None` stops. `ProfitecClient.brew(dose)` refuses execution unless constructed with `allow_experimental_controls=True`. A stop (`None`) is sent even while a settings request is running or after a failed request. There is no direct control CLI; remote brewing exists only through the opt-in MQTT bridge below. Bluetooth acknowledgement does not prove that the machine started or stopped. Do not retry an uncertain brew command automatically. Keep physical control of the machine when testing.
 
-The package does not implement arbitrary register writes, firmware updates, scale pairing, calibration, or app history/cloud services. See FEATURES.md for the precise coverage and gaps. No automatic initialization writes or auto-reconnect loops are hidden in the client.
+The package does not implement arbitrary register writes, firmware updates, scale pairing, calibration, or app history/cloud services. See FEATURES.md for the precise coverage and gaps. No automatic initialization writes or auto-reconnect loops are hidden in the client; only the `bridge` daemon reconnects, and it never resends a command.
 
 ## Evidence and development
 
@@ -71,7 +71,7 @@ Run independent CLI tests from this directory:
 python -m unittest discover -s tests -v
 ```
 
-This is version 0.2.0, an unofficial research library. Research against app version 3.8 and recordings from one MOVE 2.0 with firmware 2.02 support the current mapping; they do not establish compatibility with every firmware version. See [VERIFICATION.md](VERIFICATION.md) for executed checks.
+This is version 0.3.0, an unofficial research library. Research against app version 3.8 and recordings from one MOVE 2.0 with firmware 2.02 support the current mapping; they do not establish compatibility with every firmware version. See [VERIFICATION.md](VERIFICATION.md) for executed checks.
 
 ## Named settings and local presets
 
@@ -109,6 +109,48 @@ profitec-ble export-csv shot.jsonl shot.csv
 `summarize(path)` detects brewing transitions from raw status packets and reports each shot's observed boundaries, duration, peak pressure and sample count. A capture that begins during brewing or ends before a stop has `complete: false` and no duration. Completeness means both boundaries were observed; it does not guarantee uninterrupted radio delivery. Pressure samples are included only inside the observed brewing window. State notifications are roughly one second apart on the tested machine, so this is not millisecond timing or a calibrated peak measurement.
 
 `export_csv(source, destination)` emits one row per packet with UTC/offset timestamp, UUID, original hex and decoded telemetry columns. It validates the complete input before creating an output, rejects malformed known packets or backwards timestamps, and never overwrites a file. Both tools decode raw bytes again instead of trusting a saved `decoded` field. CSV export currently loads the capture into memory.
+
+## Live view, per-shot recording and plots
+
+```sh
+profitec-ble watch DEVICE
+profitec-ble record-shots DEVICE --shots-dir shots
+profitec-ble metrics shots/2026-11-25T12-00-01+00-00.jsonl
+profitec-ble plot shot.jsonl shot.html --compare older1.jsonl older2.jsonl
+profitec-ble shots --shots-dir shots
+profitec-ble shot-note 2026-11-25T12-00-01+00-00.jsonl --bean Kenya --grind 2.5 --ratio 1:2
+profitec-ble shots-index --shots-dir shots
+```
+
+Several telemetry streams can run on one connection, beside one settings request or control operation. `watch` prints one line per status packet with the latest pressure and a derived **ready** flag. Ready means state 0 and coffee temperature within ±1 °C of the configured setpoint for 60 s. It is not a machine flag. `record-shots` writes each brewing window to its own JSONL file. The idle status packet before the window is included, so the shot counts as complete. Each file is indexed in `shots.db` (stdlib SQLite). `shots-index` rebuilds the metrics from the JSONL files and keeps notes. Notes and brew-by-weight weights live only in the database. `metrics` adds mean pressure, seconds above 6 bar, time to the first sample at or above 1 bar, and the coffee temperature at start and end. These are sample-and-hold estimates at notification spacing, not calibrated measurements. `plot` writes a standalone HTML/SVG file and never overwrites one. `record --log` also captures raw device-log indications (`873ae829`); they are not decoded.
+
+## Profile diff, journal restore, report and weekday check
+
+```sh
+profitec-ble profile-diff DEVICE baseline.json
+profitec-ble journal-restore spotlight-change.jsonl
+profitec-ble journal-restore spotlight-change.jsonl --device DEVICE --apply --journal restore.jsonl
+profitec-ble report DEVICE
+profitec-ble weekday-check DEVICE 0 --journal weekday-0.jsonl
+```
+
+`profile-diff` lists the settings whose machine value differs from a preset. `journal-restore` previews the original values from a journal's before-image. `--apply` sends them through the normal journaled, read-back path. `report` prints a shareable compatibility report: firmware, block lengths, whether named decoding succeeded, the words without names, the clock weekday code next to the host weekday, and the GATT characteristic UUIDs. It contains no device address. `weekday-check` **writes**: it sets window 0 of one wire day index to 03:33–03:34, asks which weekday the machine or app shows, and restores the window under a second journal. It refuses a window that is already in use. Clock setting is not implemented. It needs a capture of the official app setting the clock.
+
+## MQTT / Home Assistant bridge (experimental)
+
+```sh
+python -m pip install "profitec-ble[mqtt] @ git+https://github.com/SevFle/profitec-ble.git"
+MQTT_PASSWORD=... profitec-ble bridge DEVICE --mqtt-host homeassistant.local --mqtt-user ha --mqtt-password-env MQTT_PASSWORD \
+  --journal-dir journals --shots-dir shots [--scale SCALE] [--allow-remote-brew]
+```
+
+The bridge publishes Home Assistant discovery for pressure, both temperatures, state, brewing, ready, scale weight, and all 20 settings. Settings are editable only with `--journal-dir`. Each write gets a new journal file and shows the read-back value, not the requested one. A failed write is published to `profitec/<device>/error`, followed by a reconnect. Nothing is retried. Retained command messages are ignored, so a broker cannot replay a brew. The bridge reconnects with a 2 s to 60 s backoff and publishes availability. A command arriving while disconnected is rejected, not queued. The **Release Bluetooth** switch disconnects the machine and scale for 10 minutes so the official app can connect. It is refused while brewing.
+
+`--allow-remote-brew` adds brew dose 1/2, manual, stop, and brew-by-weight buttons. A start is refused unless state is 0 and the coffee temperature is within 2 °C of the setpoint. Remote brewing can start a physical machine with nobody present. Use it only with a cup in place and the machine supervised.
+
+## Brew-by-weight with a Eureka Precisa (experimental, unverified on hardware)
+
+`brew_by_weight(machine, scale, target_g, dose, journal, stop_offset_g=2.0)` needs a fresh scale reading. It tares the scale, waits for a reading near zero, then starts **timed** dose 1 or 2. It sends one stop when the weight reaches `target_g - stop_offset_g`, and logs the final weight after 5 s. The timed dose is the backstop. If the scale stops reporting, the shot continues until the machine's dose time ends, and the function warns once. If the dose ends before the target, the result says `target_not_reached` and no command is sent. Each event is fsynced to a new journal. Set the dose time longer than the expected shot. Precisa support (`PrecisaScale`, `decode_weight`) and remote timed-dose execution have not yet been checked on hardware.
 
 ## License and manufacturer attribution
 

@@ -33,6 +33,12 @@ Public-release preparation on 2026-11-25:
 - Scanned release source for credential patterns, personal paths, device identifiers, and private reverse-engineering artifact references; no matches remained. This is a bounded pattern scan, not a guarantee against every possible secret.
 - GitHub CI is configured for Python 3.11 and 3.14 on Linux, macOS, and Windows. Its results are reported separately from hardware compatibility.
 
+## Feature suite (0.3)
+
+- `python -m unittest discover -s tests` runs 54 tests (41 existing plus 13 new). The new tests cover metrics, plots, the shot recorder and index, profile diff, journal restore, the ready hold, Precisa weight decoding, and brew-by-weight. Brew-by-weight cases: stop at target minus offset, scale loss letting the timed dose finish, dose end before the target, and refusal on a stale scale or manual dose. Bridge cases: read-back shown after a mismatch with no retry, reconnect without resend, the remote-brew gate, retained commands ignored, release refused while brewing, and brew buttons hidden without the flag. One test runs a stream, a settings read and a stop on one simulated connection.
+- The bridge ran against a local amqtt 0.12.2 broker with a simulated machine. It published 31 discovery configs, went online, and executed one live brew command. A retained `cmd/brew` already stored on the broker was replayed on subscribe and ignored. A live publish with the retain flag reaches existing subscribers as non-retained (MQTT 3.1.1 §3.3.1.3), so only broker replays can be detected.
+- None of the 0.3 features have run against the machine or a scale yet.
+
 ## Unverified
 
 Linux/Windows hardware, other firmware, calibration accuracy, automatic Flush/Ready Go detection, active calendar-triggered scheduling, weekday names, timed-dose command execution, scale/tare/weight-stop, firmware update, and official cloud services. Readback success must not be described as proof of those behaviors.

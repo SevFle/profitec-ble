@@ -35,6 +35,14 @@ These requests and response lengths were observed in connection captures. Firmwa
 
 Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or `00650008` (manual). Stop writes `0065000a`. The captured dose-1 shot contains the first, second and stop payloads. Library manual start/stop was exercised once on hardware; timed-dose execution remains unverified. Multi-command start is not atomic; a timeout may occur after a command took effect.
 
+## Eureka Precisa scale (third-party, unverified here)
+
+Advertised names `CFS-9002` or `LSJ-001`. Service `fff0`; weight notifications on `fff1`; commands on `fff2`, written without response. A weight notification is 11 bytes: byte 6 is a sign flag, and bytes 7–8 are an unsigned little-endian count of 0.1 g. Tare is `aa023131`. Source: Beanconqueror's public implementation (see NOTICE.md). These facts have not been checked against a capture in this project.
+
+## Device log
+
+`873ae829` indications are captured raw by `record --log` and published raw by the bridge. Their format is unknown.
+
 ## Remaining features
 
 Recovered function names cover temperature settings, pre-infusion, doses, schedules, standby, eco mode, lights, cleaning reminders, per-dose stop-on-weight and scale pairing. Names alone do not establish payload semantics. Future additions should retain an exact capture, source offset, decoded before/after values, and independent regression coverage. App history, notes and graphs may be app-local rather than machine protocol features.
