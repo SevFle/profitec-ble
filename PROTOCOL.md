@@ -33,7 +33,7 @@ These requests and response lengths were observed in connection captures. Firmwa
 
 ## Brew commands (experimental)
 
-Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or `00650008` (manual). Stop writes `0065000a`. The captured dose-1 shot contains the first, second and stop payloads. Library manual start/stop was exercised once on hardware; timed-dose execution remains unverified. Multi-command start is not atomic; a timeout may occur after a command took effect.
+Start first writes `00660001`, then `00650001` (dose 1), `00650002` (dose 2), or `00650008` (manual). Stop writes `0065000a`. The captured dose-1 shot contains the first, second and stop payloads. Library manual start/stop was exercised once on hardware; one supervised remote dose-1 start and stop reported state 1, then 0; dose 2 remains unexercised. Multi-command start is not atomic; a timeout may occur after a command took effect.
 
 ## Device log
 

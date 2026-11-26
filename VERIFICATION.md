@@ -42,6 +42,7 @@ Public-release preparation on 2026-11-25:
   - `scan` needed a fix: the machine advertises as `MOVE2-<serial>` with no service UUIDs.
   - `report` read all four blocks; named decoding succeeded for each. The clock weekday code was 5 on a Thursday (host time). Device-log characteristic `873ae829` exists with `indicate`; it was not subscribed.
   - `watch` streamed 20 s: state 1 at 110 °C coffee, then state 0 as the boiler fell to 89 °C (setpoint 92). Ready stayed off, as expected outside ±1 °C. Idle pressure read -0.35 bar, an offset that has not been explained.
+  - Supervised remote timed dose 1: start acknowledged after 0.15 s, state 1 reported 0.07 s later. Stop sent 5 s after start, with a general-settings read in flight on the same connection. The stop and the read were both acknowledged, and state 0 followed within 1 s. No retry was sent. This was one run, not a reliability measurement.
   - The machine accepts one Bluetooth central. Other local apps holding it make it stop advertising.
 - No Home Assistant instance has consumed the discovery messages yet.
 - None of the 0.3 features have run against the machine or a scale yet. Hardware checklist: device-log subscribe, remote timed-dose start, stop during a timed dose, stop sent while a settings write is in flight on `873ae834`, and one bridge session with Home Assistant.

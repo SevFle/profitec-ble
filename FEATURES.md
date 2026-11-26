@@ -10,7 +10,7 @@ This is a Bluetooth interoperability library, not a full replacement for the off
 | Local presets | Save, load, plan and apply | Own JSON format; not an official account export; writes are not atomic |
 | Schedule windows | Read and opt-in per-window write | One window changed, read back and restored; weekday naming and calendar-triggered starts unverified |
 | Manual brew start/stop | Opt-in Python API | One supervised start/stop with state 8 then 0 observed |
-| Timed dose 1/2 start | Encoded in the experimental API | Observed dose-1 protocol traffic; remote timed-dose execution not verified |
+| Timed dose 1/2 start | Encoded in the experimental API | One supervised remote dose-1 start and stop (state 1, then 0); dose 2 not run |
 | Shot summaries and CSV | Offline tools | CLI tests and recorded shot checked; timestamp resolution is about one second for state transitions |
 | Live view, ready flag, per-shot recording, metrics, plots, shot index | CLI and Python API | Simulated transport and fixture tests; ready flag is derived, not a machine signal |
 | Profile diff, journal restore, compatibility report | CLI | Offline and simulated tests; restore uses the journaled write path |
